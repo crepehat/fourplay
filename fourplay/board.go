@@ -3,6 +3,7 @@ package fourplay
 import (
 	"errors"
 	"fmt"
+	"sync"
 )
 
 /*
@@ -20,16 +21,18 @@ board     position  mask      bottom    key
 
 // Board represents all the pieces currently on the board
 type Board struct {
-	CurrentBoard   uint64
-	PlayerPosition uint64
-	Moves          uint8
+	CurrentBoard uint64
+	Position     uint64
+	Moves        int8
 }
 
 // BoardHeight represents the height of the board
-var BoardHeight uint8
+var BoardHeight int8
+var uBoardHeight uint8
 
 // BoardWidth represents the width of the board
-var BoardWidth uint8
+var BoardWidth int8
+var uBoardWidth uint8
 
 // BottomRowMask is a one in each of the last rows,
 // calculated according to size of board
@@ -37,23 +40,19 @@ var BottomRowMask uint64
 
 func NewBoard() Board {
 	return Board{
-		CurrentBoard:   0,
-		PlayerPosition: 0,
-		Moves:          0,
+		CurrentBoard: 0,
+		Position:     0,
+		Moves:        0,
 	}
 }
 
 func XYMask(x, y uint8) uint64 {
-	return (1 << y << (x * (BoardHeight + 1)))
+	return ((1 << y) << (x * (uBoardHeight + 1)))
 }
 
 func PrintGrid(grid uint64) {
-	for y := BoardHeight; y != 255; y-- {
-		// fmt.Println(y)
-		for x := uint8(0); x < BoardWidth; x++ {
-			// fmt.Println(x)
-			// fmt.Println(grid, XYMask(x,y))
-			// fmt.Printf("%d%d ", x, y)
+	for y := uBoardHeight; y != 255; y-- {
+		for x := uint8(0); x < uBoardWidth; x++ {
 			if grid&XYMask(x, y) != 0 {
 				fmt.Printf("x ")
 			} else {
@@ -67,25 +66,29 @@ func PrintGrid(grid uint64) {
 
 // Print the board
 func (b Board) Print() {
-	// fmt.Println(strconv.FormatInt(b.PlayerPosition, 2))
+	// fmt.Println(strconv.FormatInt(b.Position, 2))
 	// fmt.Println(strconv.FormatInt(b.CurrentBoard, 2))
 	// PrintGrid(b.CurrentBoard)
-	// PrintGrid(b.PlayerPosition)
-	bothplayersboard := b.CurrentBoard + b.PlayerPosition + BottomRowMask
+	// PrintGrid(b.Position)
+	bothplayersboard := b.CurrentBoard + b.Position + BottomRowMask
 	PrintGrid(bothplayersboard)
 
 }
 
 func TopMask(column uint8) uint64 {
-	return (1 << (BoardHeight - 1)) << (column * (BoardHeight + 1))
+	return (1 << (uBoardHeight - 1)) << (column * (uBoardHeight + 1))
 }
 
 func BottomMask(column uint8) uint64 {
-	return (1 << (column * (BoardHeight + 1)))
+	return (1 << (column * (uBoardHeight + 1)))
 }
 
-// CheckMove is valid
-func (b Board) CheckMove(column uint8) bool {
+func ColumnMask(column uint8) uint64 {
+	return (((1 << (uBoardHeight + 1)) - 1) << ((uBoardHeight + 1) * column))
+}
+
+// ValidMove is valid
+func (b Board) ValidMove(column uint8) bool {
 	return TopMask(column)&b.CurrentBoard == 0
 }
 
@@ -103,20 +106,10 @@ var ErrInvalidColumn = errors.New("move: not that many columns")
 var ErrGameWon = errors.New("move: game won")
 
 // MakeMove on a board.
-func (b Board) MakeMove(column uint8) (newboard Board, err error) {
-	if !b.CheckMove(column) {
-		return b, ErrColumnFull
-	}
-	if column >= BoardWidth {
-		return b, ErrInvalidColumn
-	}
-	newboard.PlayerPosition = b.CurrentBoard ^ b.PlayerPosition
+func (b Board) MakeMove(column uint8) (newboard Board) {
+	newboard.Position = b.CurrentBoard ^ b.Position
 	newboard.CurrentBoard = b.CurrentBoard | (b.CurrentBoard + BottomMask(column))
 	newboard.Moves = b.Moves + 1
-	newboard.Print()
-	if newboard.Winning() {
-		return b, ErrGameWon
-	}
 	return
 }
 
@@ -130,40 +123,139 @@ func CreateFromSequence(sequence string) (board Board, err error) {
 		if errchar != nil {
 			fmt.Println(err)
 		}
-		fmt.Println(board.Moves, column+1)
-		board, err = board.MakeMove(column)
-		if err != nil {
-			fmt.Println(err)
-			return
+		if column >= uBoardWidth {
+			return board, ErrInvalidColumn
 		}
+		if !board.ValidMove(column) {
+			return board, ErrColumnFull
+		}
+		if board.IsWinningMove(column) {
+			return board, ErrGameWon
+		}
+		board = board.MakeMove(column)
 	}
+
 	return
 }
 
-// func
+func (b Board) IsWinningMove(column uint8) bool {
+	newposition := b.Position | ((b.CurrentBoard + BottomMask(column)) & ColumnMask(column))
+	return IsWinning(newposition)
+}
 
-func (b Board) Winning() bool {
-	playerPosition := b.CurrentBoard ^ b.PlayerPosition
+func IsWinning(position uint64) bool {
+	// playerPosition := b.CurrentBoard ^ b.Position
 
 	// horizontal
-	m := playerPosition & (playerPosition >> (BoardHeight + 1))
-	if m&(m>>(2*(BoardHeight+1))) != 0 {
+	m := position & (position >> (uBoardHeight + 1))
+	if m&(m>>(2*(uBoardHeight+1))) != 0 {
 		return true
 	}
 	// diag1
-	m = playerPosition & (playerPosition >> (BoardHeight))
-	if m&(m>>(2*(BoardHeight))) != 0 {
+	m = position & (position >> (uBoardHeight))
+	if m&(m>>(2*(uBoardHeight))) != 0 {
 		return true
 	}
 	// diag2
-	m = playerPosition & (playerPosition >> (BoardHeight + 2))
-	if m&(m>>(2*(BoardHeight+2))) != 0 {
+	m = position & (position >> (uBoardHeight + 2))
+	if m&(m>>(2*(uBoardHeight+2))) != 0 {
 		return true
 	}
 	// vertical
-	m = playerPosition & (playerPosition >> 1)
+	m = position & (position >> 1)
 	if m&(m>>(2)) != 0 {
 		return true
 	}
 	return false
+}
+
+func (b Board) GogaMax(wg *sync.WaitGroup, alphachan, betachan, maxchan chan int8) {
+	defer wg.Done()
+
+	if b.Moves == BoardHeight*BoardWidth {
+		maxchan <- int8(0)
+		return
+	}
+
+	// check if we can win next move
+	for i := uint8(0); i < uBoardWidth; i++ {
+		if b.ValidMove(i) && b.IsWinningMove(i) {
+			// b.Print()
+			// fmt.Printf("Can win next move. Score: %d\n", (BoardHeight*BoardWidth+1-b.Moves)/2)
+			maxchan <- (BoardHeight*BoardWidth + 1 - b.Moves) / 2
+		}
+	}
+
+	// upper bound of score since cannot win next move
+	// max := (BoardHeight*BoardWidth - 1 - b.Moves) / 2
+
+	beta := <-betachan
+	alpha := <-alphachan
+	max := <-maxchan
+	if beta > max {
+		beta = max
+		if alpha >= beta {
+			return beta
+		}
+	}
+
+	var score int8
+	for i := uint8(0); i < uBoardWidth; i++ {
+		if b.ValidMove(i) {
+			nextBoard := b.MakeMove(i)
+			// nextBoard.Print()
+			score = -nextBoard.NegaMax(-beta, -alpha)
+			if score >= beta {
+				return score
+			}
+			if score > alpha {
+				alpha = score
+			}
+			// fmt.Println(bestScore)
+		}
+	}
+
+	return alpha
+}
+
+func (b Board) NegaMax(alpha, beta int8) int8 {
+	if b.Moves == BoardHeight*BoardWidth {
+		return int8(0)
+	}
+
+	// check if we can win next move
+	for i := uint8(0); i < uBoardWidth; i++ {
+		if b.ValidMove(i) && b.IsWinningMove(i) {
+			// b.Print()
+			// fmt.Printf("Can win next move. Score: %d\n", (BoardHeight*BoardWidth+1-b.Moves)/2)
+			return (BoardHeight*BoardWidth + 1 - b.Moves) / 2
+		}
+	}
+
+	// upper bound of score since cannot win next move
+	max := (BoardHeight*BoardWidth - 1 - b.Moves) / 2
+	if beta > max {
+		beta = max
+		if alpha >= beta {
+			return beta
+		}
+	}
+
+	var score int8
+	for i := uint8(0); i < uBoardWidth; i++ {
+		if b.ValidMove(i) {
+			nextBoard := b.MakeMove(i)
+			// nextBoard.Print()
+			score = -nextBoard.NegaMax(-beta, -alpha)
+			if score >= beta {
+				return score
+			}
+			if score > alpha {
+				alpha = score
+			}
+			// fmt.Println(bestScore)
+		}
+	}
+
+	return alpha
 }
